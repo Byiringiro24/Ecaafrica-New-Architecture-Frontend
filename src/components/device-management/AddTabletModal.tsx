@@ -1,0 +1,151 @@
+import { useEffect, useState } from "react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+
+type AddTabletModalProps = {
+  open: boolean;
+  onClose: () => void;
+  mode?: "create" | "edit";
+  initialData?: {
+    name?: string;
+    ip?: string;
+    port?: number | string;
+    location?: string | null;
+  } | null;
+  onSubmit: (data: {
+    name: string;
+    ip: string;
+    port: number;
+    location?: string;
+  }) => Promise<void>;
+};
+
+export function AddTabletModal({ open, onClose, onSubmit, mode = "create", initialData }: AddTabletModalProps) {
+  const [formData, setFormData] = useState({
+    name: "",
+    ip: "10.0.0.2",
+    port: "5000",
+    location: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData({
+      name: initialData?.name ?? "",
+      ip: initialData?.ip ?? "10.0.0.2",
+      port: String(initialData?.port ?? "5000"),
+      location: initialData?.location ?? "",
+    });
+    setError("");
+  }, [initialData, open]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      await onSubmit({
+        name: formData.name,
+        ip: formData.ip,
+        port: parseInt(formData.port),
+        location: formData.location || undefined,
+      });
+      if (mode === "create") setFormData({ name: "", ip: "10.0.0.2", port: "5000", location: "" });
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Failed to add tablet");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>{mode === "edit" ? "Edit Tablet" : "Add New Tablet"}</DialogTitle>
+          <DialogDescription>
+            {mode === "edit"
+              ? "Update the Windows tablet bridge settings used by the backend."
+              : "Register the Windows tablet bridge that the backend can reach over WireGuard."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Tablet Name *</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Main Gate Tablet"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="ip">Tablet Bridge IP *</Label>
+              <Input
+                id="ip"
+                value={formData.ip}
+                onChange={(e) => setFormData({ ...formData, ip: e.target.value })}
+                placeholder="10.0.0.2"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="port">Port *</Label>
+              <Input
+                id="port"
+                type="number"
+                value={formData.port}
+                onChange={(e) => setFormData({ ...formData, port: e.target.value })}
+                placeholder="5000"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="location">Location</Label>
+            <Input
+              id="location"
+              value={formData.location}
+              onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+              placeholder="e.g., Main Entrance"
+            />
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
+              {error}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? "Saving..." : mode === "edit" ? "Save Tablet" : "Add Tablet"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}

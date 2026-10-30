@@ -1,0 +1,198 @@
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { useState, FormEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Loader2, Eye, EyeOff,
+} from "lucide-react";
+import logo from "@/assets/netrack-logo.png";
+import { toast } from "sonner";
+import { apiRequest } from "@/lib/api";
+import { setPlatformAuth } from "@/lib/platformAuth";
+import { getAvailableRoles, setSchoolAuth } from "@/lib/schoolAuth";
+
+type LoginResponse = {
+  user: { id: string; name?: string | null; email?: string | null; role?: string | null; roles?: { slug: string }[] };
+  accessToken: string;
+  refreshToken?: string | null;
+};
+
+type LoginMode = "school" | "platform";
+
+export const Route = createFileRoute("/login")({
+  component: LoginPage,
+  validateSearch: (search) => ({
+    redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+    mode: search.mode === "platform" ? "platform" : "school"
+  })
+});
+
+function LoginPage() {
+  const navigate = useNavigate();
+  const { redirect, mode } = Route.useSearch();
+  const loginMode: LoginMode = mode ?? "school";
+  const isPlatform = loginMode === "platform";
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!email || !password) { setError("Please enter both email and password."); return; }
+    setLoading(true);
+    try {
+      const result = await apiRequest<LoginResponse>(
+        isPlatform ? "/auth/platform/login" : "/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+          auth: "none"
+        }
+      );
+
+      if (isPlatform) {
+        setPlatformAuth({
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken ?? null,
+          user: result.user
+        });
+      } else {
+        setSchoolAuth({
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken ?? null,
+          user: result.user
+        });
+      }
+
+      toast.success(
+        `Welcome back, ${result.user?.name ?? (isPlatform ? "Platform Admin" : "School User")}!`
+      );
+      const role = result.user?.role?.toLowerCase?.();
+      const fallbackRoute = isPlatform
+        ? "/super-admin"
+        : role === "teacher"
+        ? "/teacher/dashboard"
+        : role === "gate_keeper"
+        ? "/gate-keeper/dashboard"
+        : role === "director_of_discipline"
+        ? "/dod/dashboard"
+        : role === "patron" || role === "matron"
+        ? "/patron/dashboard"
+        : role === "director_of_studies"
+        ? "/dos/dashboard"
+        : role === "finance_officer"
+        ? "/finance"
+        : role === "staff"
+        ? "/staff/dashboard"
+        : "/dashboard";
+
+      const destination = isPlatform
+        ? (redirect || fallbackRoute)
+        : getAvailableRoles().length > 1
+          ? `/select-role?redirect=${encodeURIComponent(redirect || "")}`
+          : (redirect || fallbackRoute);
+      // Use window.location for reliable navigation (avoids TanStack Router type issues)
+      window.location.href = destination;
+    } catch (err) {
+      const message =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: string }).message)
+          : "Login failed. Please try again.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-white text-[#1A1A1A] font-sans antialiased flex flex-col justify-between py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+
+      <div className="absolute top-0 right-0 w-75 h-75 bg-linear-to-br from-[#42A5F5]/5 to-transparent rounded-full blur-[80px] pointer-events-none"></div>
+      <div className="absolute bottom-0 left-0 w-75 h-75 bg-linear-to-tr from-[#0A3D91]/5 to-transparent rounded-full blur-[80px] pointer-events-none"></div>
+
+
+      <div className="sm:mx-auto sm:w-full sm:max-w-md z-10 my-auto">
+        <div className="bg-white border border-[#EEF4FF] p-8 sm:p-10 rounded-2xl shadow-[0_10px_30px_-5px_rgba(10,61,145,0.05)]">
+          <div className="text-center mb-8">
+            <Link to="/" className="w-16 h-16 mx-auto mb-4 block rounded-2xl bg-[#0A3D91]/5 shadow-sm transition hover:scale-[1.02]">
+              <div className="h-full w-full flex items-center justify-center text-[#0A3D91]">
+                <img src={logo} alt="Netrack logo" className="h-9 w-9 object-contain" />
+              </div>
+            </Link>
+            <h1 className="font-display text-2xl font-bold text-[#0A3D91] mb-2">
+              Welcome back
+            </h1>
+            <p className="text-xs text-[#5F6B7A]">
+              {isPlatform
+                ? "Sign in with your platform admin credentials"
+                : "Sign in with your school credentials"}
+            </p>
+          </div>
+
+          {error && (
+            <div className="mb-5 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm px-3 py-2">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-[10px] uppercase tracking-wider text-[#5F6B7A] font-bold">Email address</Label>
+              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} disabled={loading} required className="bg-[#F4F7FC]/50 h-11 border-[#EEF4FF] focus-visible:ring-[#0A3D91] rounded-xl" />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-[10px] uppercase tracking-wider text-[#5F6B7A] font-bold">Password</Label>
+                <Link to="/forgot-password" className="text-xs text-[#42A5F5] font-semibold hover:underline">Forgot password?</Link>
+              </div>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  disabled={loading}
+                  required
+                  className="bg-[#F4F7FC]/50 h-11 border-[#EEF4FF] focus-visible:ring-[#0A3D91] rounded-xl pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(prev => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#5F6B7A] hover:text-[#0A3D91]"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <Button type="submit" disabled={loading} className="w-full bg-[#0A3D91] hover:bg-[#1565C0] text-white rounded-xl h-11 shadow-md font-semibold transition-all hover:scale-[1.01] mt-2">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
+            </Button>
+          </form>
+
+          <div className="mt-8 text-center text-xs text-[#5F6B7A] pt-6 border-t border-[#EEF4FF] space-y-2">
+            <div>
+              {isPlatform ? "School login?" : "Platform admin?"}{" "}
+              <Link
+                to="/login"
+                search={{ redirect, mode: isPlatform ? "school" : "platform" }}
+                className="text-[#42A5F5] font-bold hover:underline"
+              >
+                {isPlatform ? "School Login" : "Platform Login"}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="text-center text-xs text-[#8A94A6] z-10 mt-auto">
+        © 2026 ECA – Education Care Africa. Powered by Netrack.
+      </div>
+    </div>
+  );
+}
