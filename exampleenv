@@ -1,0 +1,4 @@
+﻿# Example frontend environment variables
+# Copy this file to .env and replace values as needed.
+
+VITE_API_BASE_URL=http://localhost:5501/api/v1
