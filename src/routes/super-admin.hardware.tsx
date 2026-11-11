@@ -5,6 +5,7 @@ import {
   Plus, Trash2, RefreshCw, CheckCircle2, ArrowRightLeft,
   Pencil, X, Save, Link2, Zap, AlertTriangle, Info,
   Wifi, Key, Copy, ClipboardPaste, WifiOff, ShieldCheck, Activity,
+  Users, Search, Loader2, Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { SuperAdminLayout } from "@/components/layout/SuperAdminLayout";
@@ -558,6 +559,7 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [pingingDevice, setPingingDevice] = useState<string | null>(null);
   const [deviceLiveStatus, setDeviceLiveStatus] = useState<Record<string, boolean | null>>({});
+  const [usersModalDevice, setUsersModalDevice] = useState<PlatformDevice | null>(null);
 
   // Ping a device by pinging its linked tablet's health endpoint
   const handlePingDevice = async (d: PlatformDevice) => {
@@ -684,14 +686,10 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
     if (!tablet) { toast.error("Device is not linked to a tablet. Link it first in the Assign tab."); return; }
     setConnecting(d.id);
     try {
-      await apiRequest(`/tablets/${tablet.id}/device/connect`, {
-        method: "POST",
-        body: JSON.stringify({
-          ipAddress: (d as any).tablet_ip,
-          port: (d as any).tablet_port ?? 5005,
-          license: (d as any).license_number ?? 1261,
-        }),
-        auth: "school",
+      await platformHardwareApi.connectDevice(tablet.id, {
+        ipAddress: (d as any).tablet_ip,
+        port: (d as any).tablet_port ?? 5005,
+        license: (d as any).license_number ?? 1261,
       });
       toast.success(`Connected to FK623 via ${tablet.name} — auto-pull is active ✓`);
       onRefresh();
@@ -905,9 +903,17 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
                           </button>
                         )}
                         {(deviceLiveStatus[d.id] ?? d.is_connected) && (
-                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                            <CheckCircle2 className="h-3 w-3" /> Auto-pull active
-                          </span>
+                          <>
+                            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                              <CheckCircle2 className="h-3 w-3" /> Auto-pull
+                            </span>
+                            <button
+                              onClick={() => setUsersModalDevice(d)}
+                              title="Manage device users (pull, edit, delete, push)"
+                              className="inline-flex items-center gap-1 rounded-md border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100 transition">
+                              <Users className="h-3 w-3" /> Users
+                            </button>
+                          </>
                         )}
                         <button onClick={() => startEdit(d)} title="Edit device"
                           className="p-1.5 rounded-md hover:bg-amber-50 hover:text-amber-600 text-muted-foreground border border-border">
@@ -925,6 +931,222 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
           </div>
         )}
       </section>
+
+      {/* Device Users Modal */}
+      {usersModalDevice && (
+        <DeviceUsersModal
+          device={usersModalDevice}
+          tablets={tablets}
+          onClose={() => setUsersModalDevice(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * DeviceUsersModal — pull, edit, delete, push students for one FK623 device.
+ * Uses platform auth (super admin) and the new /platform/hardware/tablets/:id/device/* proxy routes.
+ */
+function DeviceUsersModal({ device, tablets, onClose }: {
+  device: PlatformDevice;
+  tablets: PlatformTablet[];
+  onClose: () => void;
+}) {
+  const tablet = tablets.find(t => String(t.id) === String(device.tablet_id));
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
+  const [editUser, setEditUser] = useState<any | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const pullUsers = async () => {
+    if (!tablet) return;
+    setLoading(true);
+    try {
+      const res = await platformHardwareApi.getDeviceUsers(tablet.id);
+      const data = res?.data ?? res;
+      const list = Array.isArray(data) ? data : data?.users ?? data?.data?.users ?? [];
+      setUsers(list);
+      toast.success(`Loaded ${list.length} user${list.length !== 1 ? "s" : ""}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to pull users — check VPN connection");
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { void pullUsers(); }, []);
+
+  const handleRename = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!tablet || !editUser || !editName.trim()) return;
+    setEditBusy(true);
+    try {
+      await platformHardwareApi.renameDeviceUser(tablet.id, editUser.userId, editName.trim());
+      setUsers(prev => prev.map(u => u.userId === editUser.userId ? { ...u, name: editName.trim() } : u));
+      toast.success("Name updated");
+      setEditUser(null); setEditName("");
+    } catch (e: any) { toast.error(e?.message || "Rename failed"); }
+    finally { setEditBusy(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!tablet || !deleteUserId) return;
+    setDeleteBusy(true);
+    try {
+      await platformHardwareApi.deleteDeviceUser(tablet.id, deleteUserId);
+      setUsers(prev => prev.filter(u => u.userId !== deleteUserId));
+      toast.success("User deleted");
+    } catch (e: any) { toast.error(e?.message || "Delete failed"); }
+    finally { setDeleteBusy(false); setDeleteUserId(null); }
+  };
+
+  const handlePushAll = async () => {
+    if (!tablet) return;
+    setBusy(true);
+    try {
+      const res = await platformHardwareApi.pushStudents(tablet.id);
+      const pushed = (res as any)?.pushed ?? (res as any)?.data?.pushed ?? "?";
+      const failed = (res as any)?.failed ?? (res as any)?.data?.failed ?? 0;
+      if (failed > 0) toast.error(`Pushed ${pushed}, ${failed} failed`);
+      else toast.success(`Pushed ${pushed} students to device`);
+      await pullUsers();
+    } catch (e: any) { toast.error(e?.message || "Push failed"); }
+    finally { setBusy(false); }
+  };
+
+  const filtered = users.filter(u => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return `${u.name} ${u.userId}`.toLowerCase().includes(q);
+  });
+
+  if (!tablet) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-amber-500 mb-3" />
+          <p className="text-sm text-muted-foreground">This device is not linked to a tablet. Link it first in the Assign tab.</p>
+          <button onClick={onClose} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted">Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 backdrop-blur-sm overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-2xl my-8">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div className="flex items-center gap-3">
+            <Users className="h-5 w-5 text-cyan-600" />
+            <div>
+              <h2 className="font-display text-lg font-semibold">{device.name} — Users</h2>
+              <p className="text-xs text-muted-foreground">Via {tablet.name} ({tablet.ip}) over VPN</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted text-muted-foreground"><X className="h-4 w-4" /></button>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          <div className="relative flex-1 min-w-[140px] max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+              className="w-full rounded-lg border border-border bg-background pl-8 pr-3 py-2 text-sm outline-none focus:border-primary" />
+          </div>
+          <button onClick={pullUsers} disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50">
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} /> Pull
+          </button>
+          <button onClick={handlePushAll} disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            Push All Students
+          </button>
+          <Badge variant="secondary">{users.length} users</Badge>
+        </div>
+
+        {/* User list */}
+        <div className="max-h-[50vh] overflow-y-auto divide-y divide-border">
+          {loading ? (
+            <div className="flex h-32 items-center justify-center text-muted-foreground gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading users…
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex h-32 items-center justify-center text-muted-foreground">
+              {users.length === 0 ? "No users loaded — click Pull to fetch from device" : "No users match search"}
+            </div>
+          ) : (
+            filtered.map(u => (
+              <div key={u.userId} className="flex items-center gap-3 px-5 py-2.5 hover:bg-muted/50">
+                <div className="grid h-8 w-8 place-items-center rounded-full bg-muted shrink-0 text-xs font-bold text-muted-foreground">
+                  {(u.name || u.userId).slice(0, 2).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{u.name || `User ${u.userId}`}</div>
+                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                    <span className="font-mono">#{u.userId}</span>
+                    {u.biometricMethods?.map((m: string, i: number) => (
+                      <span key={i} className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold">{m.slice(0, 2)}</span>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={() => { setEditUser(u); setEditName(u.name || ""); }}
+                  className="p-1.5 rounded-md hover:bg-amber-50 hover:text-amber-600 text-muted-foreground border border-border">
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => setDeleteUserId(u.userId)}
+                  className="p-1.5 rounded-md hover:bg-rose-50 hover:text-rose-600 text-muted-foreground border border-border">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Edit name modal */}
+        {editUser && (
+          <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 space-y-4">
+              <h3 className="text-sm font-bold">Edit Name</h3>
+              <p className="text-xs text-muted-foreground">User #{editUser.userId}</p>
+              <form onSubmit={handleRename} className="space-y-3">
+                <input autoFocus value={editName} onChange={e => setEditName(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+                <p className="text-[10px] text-amber-600">Note: deletes and re-adds the user on the device. Biometric data is preserved.</p>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setEditUser(null)} className="flex-1 rounded-lg border border-border py-2 text-sm hover:bg-muted">Cancel</button>
+                  <button type="submit" disabled={editBusy || !editName.trim()}
+                    className="flex-1 rounded-lg bg-primary py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                    {editBusy ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {deleteUserId && (
+          <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 space-y-4">
+              <h3 className="text-sm font-bold">Delete user #{deleteUserId}?</h3>
+              <p className="text-xs text-muted-foreground">This removes the user and their biometric data from the FK623 device.</p>
+              <div className="flex gap-2">
+                <button onClick={() => setDeleteUserId(null)} className="flex-1 rounded-lg border border-border py-2 text-sm hover:bg-muted">Cancel</button>
+                <button onClick={handleDelete} disabled={deleteBusy}
+                  className="flex-1 rounded-lg bg-rose-600 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50">
+                  {deleteBusy ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
