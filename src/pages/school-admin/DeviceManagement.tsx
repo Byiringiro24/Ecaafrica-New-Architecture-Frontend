@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
-import { deviceApi, type Device } from "@/lib/deviceApi";
+import { deviceApi, type Device, type Tablet } from "@/lib/deviceApi";
 import { tabletApi } from "@/lib/tabletApi";
 import { fetchDeviceLogs } from "@/lib/device-logs-api";
 import type { DeviceLog } from "@/lib/device-logs-types";
@@ -35,7 +35,7 @@ type DeviceSession= { id: string; name: string; is_active: boolean; activated_at
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmtTime = (ts?: string | null) => { if (!ts) return "—"; const d = new Date(ts); return isNaN(d.getTime()) ? "—" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }); };
 const fmtFull = (ts?: string | null) => { if (!ts) return "—"; const d = new Date(ts); return isNaN(d.getTime()) ? "—" : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); };
-const isLiveOnline = (d?: Device | null) => { if (!d) return false; if (d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < 90_000) return true; return Boolean(d.is_connected || d.is_online || d.status === "online"); };
+const isLiveOnline = (d?: Device | null) => { if (!d) return false; if (d.is_online === true) return true; if (d.is_online === false) return false; if (d.is_connected === false) return false; if (d.is_connected === true) return true; if (d.last_seen_at && Date.now() - new Date(d.last_seen_at).getTime() < 120_000) return true; return false; };
 
 /** Get the three-tier connection status from live status data */
 const getConnectionTier = (status: any): ConnTier => {
@@ -142,6 +142,11 @@ export default function DeviceManagement() {
   const [sections,    setSections]    = useState<SectionRecord[]>([]);
   const [dormitories, setDormitories] = useState<Dormitory[]>([]);
 
+  // Tablets — for assigning multiple devices to one tablet
+  const [tablets,       setTablets]       = useState<Tablet[]>([]);
+  const [aTabletId,     setATabletId]     = useState("");
+  const [assigningTab,  setAssigningTab]  = useState(false);
+
   // Push
   const [pushMode,      setPushMode]      = useState<"all"|"class"|"section"|"boarding"|"day">("all");
   const [pushClassId,   setPushClassId]   = useState("");
@@ -189,6 +194,9 @@ export default function DeviceManagement() {
   const [fGender,         setFGender]         = useState("");
   const [fStudentType,    setFStudentType]     = useState("");
   const [fDormitory,      setFDormitory]       = useState("");
+  // fDevice: which device's logs to show — defaults to current selected device.
+  // User can switch to "All devices" or any other registered device.
+  const [fDevice,         setFDevice]          = useState("");
   const [debouncedQ,      setDebouncedQ]       = useState("");
   const [clientStudentIds,   setClientStudentIds]   = useState<Set<string> | null>(null);
   const [clientFiltLoading,  setClientFiltLoading]  = useState(false);
@@ -263,8 +271,12 @@ export default function DeviceManagement() {
     try {
       const studentIdSet = await resolveClientStudentIds();
       setClientStudentIds(studentIdSet);
+      // fDevice="" means "all devices on this tablet's school" — useful when
+      // a tablet has multiple FK623 units and you want a combined view.
+      // fDevice set to a specific id = only that device's logs.
+      const deviceIdParam = fDevice || selectedId;
       const res = await fetchDeviceLogs({
-        deviceId: selectedId, startDate: logsDate, endDate: logsDate,
+        deviceId: deviceIdParam, startDate: logsDate, endDate: logsDate,
         page: logsPage, limit: LOGS_PER_PAGE,
         search: debouncedQ || undefined, status: fStatus || undefined,
         method: fMethod || undefined, className: fClass || undefined,
@@ -277,7 +289,7 @@ export default function DeviceManagement() {
       setLogsMeta({ total: studentIdSet ? data.length : res.meta.total, totalPages: studentIdSet ? Math.max(1, Math.ceil(data.length / LOGS_PER_PAGE)) : res.meta.totalPages });
     } catch (e: any) { toast.error(e?.message ?? "Failed to load logs"); }
     finally { setLogsLoad(false); }
-  }, [selectedId, logsDate, logsPage, debouncedQ, fStatus, fMethod, fClass, fSection, fDirection, fSession, resolveClientStudentIds]);
+  }, [selectedId, fDevice, logsDate, logsPage, debouncedQ, fStatus, fMethod, fClass, fSection, fDirection, fSession, resolveClientStudentIds]);
 
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => { void loadDevices(); }, []);
@@ -286,16 +298,22 @@ export default function DeviceManagement() {
       apiRequest<any>("/classes?limit=200",              { auth: "school" }),
       apiRequest<any>("/sections?limit=500",             { auth: "school" }),
       apiRequest<any>("/boarding/dormitories?limit=200", { auth: "school" }),
-    ]).then(([cl, se, do_]) => {
+      apiRequest<any>("/tablets?limit=200",              { auth: "school" }),
+    ]).then(([cl, se, do_, tb]) => {
       setClasses(Array.isArray(cl) ? cl : cl?.data ?? []);
       setSections(Array.isArray(se) ? se : se?.data ?? []);
       setDormitories(Array.isArray(do_) ? do_ : do_?.data ?? []);
+      setTablets(Array.isArray(tb) ? tb : tb?.data ?? []);
     }).catch(() => {});
   }, []);
   useEffect(() => {
     if (!selectedId) return;
     void loadStatus(); void loadSessions();
     setDeviceUsers([]); setLogs([]);
+    // Reset device filter and tablet assignment picker to the newly selected device
+    setFDevice(selectedId);
+    const d = devices.find(x => x.id === selectedId);
+    setATabletId(d?.tablet_id ?? "");
     const iv = setInterval(() => void loadStatus(true), STATUS_POLL_MS);
     return () => clearInterval(iv);
   }, [selectedId]);
@@ -331,7 +349,7 @@ export default function DeviceManagement() {
     return list;
   }, [deviceUsers, userSearch, userMethodFil]);
   const userMethods = useMemo(() => [...new Set(deviceUsers.flatMap(u => u.biometricMethods ?? []))].sort(), [deviceUsers]);
-  const anyFilter   = Boolean(fSearch || fStatus || fMethod || fClass || fSection || fDirection || fSession || fGender || fStudentType || fDormitory);
+  const anyFilter   = Boolean(fSearch || fStatus || fMethod || fClass || fSection || fDirection || fSession || fGender || fStudentType || fDormitory || (fDevice && fDevice !== selectedId));
   const anyClientFilter = Boolean(fGender || fStudentType || fDormitory);
   const logsStats   = useMemo(() => ({
     total:   logs.length,
@@ -415,6 +433,24 @@ export default function DeviceManagement() {
     finally { setAssigning(false); }
   };
 
+  // Assign this device to a tablet (supports multiple devices per tablet)
+  const handleAssignTablet = async () => {
+    if (!selectedId) return;
+    setAssigningTab(true);
+    try {
+      if (aTabletId) {
+        await deviceApi.assignTablet(selectedId, aTabletId);
+        const tabletName = tablets.find(t => t.id === aTabletId)?.name ?? aTabletId;
+        toast.success(`Device assigned to "${tabletName}"`);
+      } else {
+        await deviceApi.unassignTablet(selectedId);
+        toast.success("Device unlinked from tablet");
+      }
+      void loadDevices();
+    } catch (e: any) { toast.error(e?.message ?? "Failed to assign tablet"); }
+    finally { setAssigningTab(false); }
+  };
+
   const handleCreateSession = async () => {
     if (!selectedId || !newName.trim()) { toast.error("Enter a session name"); return; }
     setSaveSess(true);
@@ -486,7 +522,7 @@ export default function DeviceManagement() {
     finally { setExporting(false); }
   };
 
-  const clearAllFilters = () => { setFSearch(""); setFStatus(""); setFMethod(""); setFClass(""); setFSection(""); setFDirection(""); setFSession(""); setFGender(""); setFStudentType(""); setFDormitory(""); setLogsPage(1); };
+  const clearAllFilters = () => { setFSearch(""); setFStatus(""); setFMethod(""); setFClass(""); setFSection(""); setFDirection(""); setFSession(""); setFGender(""); setFStudentType(""); setFDormitory(""); setFDevice(selectedId); setLogsPage(1); };
 
   // ── Select helper ─────────────────────────────────────────────────────────
   const Sel = ({ label, value, onChange, children }: { label: string; value: string; onChange: (v: string) => void; children: React.ReactNode }) => (
@@ -737,6 +773,101 @@ export default function DeviceManagement() {
                         )}
                         <button onClick={handleAssignLocation} disabled={assigning} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-50 shadow-sm transition-all">
                           {assigning ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save Location
+                        </button>
+                      </Collapse>
+
+                      {/* Tablet Assignment — link this FK623 device to a Windows laptop/tablet */}
+                      <Collapse
+                        title="Tablet / Laptop Assignment"
+                        icon={HardDrive}
+                        badge={selected?.tablet_id
+                          ? <span className="ml-2 rounded-full bg-green-100 border border-green-300 text-green-700 px-2 py-0.5 text-[10px] font-semibold">Linked</span>
+                          : <span className="ml-2 text-[10px] text-amber-600 font-semibold">Not linked</span>
+                        }
+                        defaultOpen={!selected?.tablet_id}
+                      >
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Link this FK623 biometric device to a Windows laptop/tablet that runs the bridge software.
+                          One tablet can have <b>multiple FK623 devices</b> connected — each device is tracked independently.
+                        </p>
+
+                        {/* Currently linked tablet info */}
+                        {selected?.tablet_id && (
+                          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 flex items-center gap-3">
+                            <HardDrive className="h-4 w-4 text-green-600 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-green-800">
+                                {tablets.find(t => t.id === selected.tablet_id)?.name ?? `Tablet #${selected.tablet_id}`}
+                              </p>
+                              <p className="text-xs text-green-600 mt-0.5">
+                                {tablets.find(t => t.id === selected.tablet_id)?.ip ?? ""} · {tablets.find(t => t.id === selected.tablet_id)?.status ?? ""}
+                              </p>
+                            </div>
+                            {/* Show all devices on the same tablet */}
+                            {devices.filter(d => d.id !== selectedId && d.tablet_id === selected.tablet_id).length > 0 && (
+                              <div className="text-xs text-muted-foreground shrink-0">
+                                +{devices.filter(d => d.id !== selectedId && d.tablet_id === selected.tablet_id).length} other device(s) on this tablet
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1.5 block text-xs font-semibold text-foreground">
+                              Select Tablet / Laptop
+                            </label>
+                            <select
+                              value={aTabletId}
+                              onChange={e => setATabletId(e.target.value)}
+                              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm"
+                            >
+                              <option value="">— None (unlink from tablet) —</option>
+                              {tablets.filter(t => t.is_active).map(t => {
+                                const devCount = devices.filter(d => d.tablet_id === t.id).length;
+                                return (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.ip}) — {devCount} device{devCount !== 1 ? "s" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                            {tablets.length === 0 && (
+                              <p className="mt-1.5 text-xs text-amber-600">
+                                No tablets found. Register a tablet in Tablet Management first.
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Devices already on selected tablet */}
+                          {aTabletId && (
+                            <div>
+                              <label className="mb-1.5 block text-xs font-semibold text-foreground">
+                                Other devices on this tablet
+                              </label>
+                              <div className="space-y-1 max-h-28 overflow-y-auto">
+                                {devices.filter(d => d.tablet_id === aTabletId && d.id !== selectedId).length === 0
+                                  ? <p className="text-xs text-muted-foreground italic">No other devices linked yet</p>
+                                  : devices.filter(d => d.tablet_id === aTabletId && d.id !== selectedId).map(d => (
+                                      <div key={d.id} className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs">
+                                        <span className={`h-2 w-2 rounded-full shrink-0 ${isLiveOnline(d) ? "bg-green-500" : "bg-gray-300"}`} />
+                                        <span className="font-medium truncate">{d.name}</span>
+                                        <span className="text-muted-foreground shrink-0">{d.device_uid}</span>
+                                      </div>
+                                    ))
+                                }
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={handleAssignTablet}
+                          disabled={assigningTab}
+                          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-50 shadow-sm transition-all"
+                        >
+                          {assigningTab ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          {aTabletId ? "Link to Tablet" : "Unlink from Tablet"}
                         </button>
                       </Collapse>
 
@@ -996,7 +1127,7 @@ export default function DeviceManagement() {
                       <div className="px-5 py-4 border-b border-border">
                         <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
                           <div>
-                            <h3 className="font-semibold text-sm flex items-center gap-2"><BarChart3 className="h-4 w-4 text-primary" /> Attendance Scans — {selected.name}</h3>
+                            <h3 className="font-semibold text-sm flex items-center gap-2"><BarChart3 className="h-4 w-4 text-primary" /> Attendance Scans — {fDevice && fDevice !== selectedId ? (devices.find(d => d.id === fDevice)?.name ?? "Selected Device") : fDevice === "" ? "All Devices" : selected.name}</h3>
                             <p className="text-xs text-muted-foreground mt-0.5">Filter and view scan records from this device</p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1020,6 +1151,19 @@ export default function DeviceManagement() {
                             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                             <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="Search name · student ID · device user ID…" className="h-8 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-xs shadow-sm" />
                           </div>
+                          {/* Device picker — shows all registered devices so user can switch
+                              between FK623 units or view logs across all devices */}
+                          <select
+                            value={fDevice}
+                            onChange={e => { setFDevice(e.target.value); setLogsPage(1); }}
+                            className={`h-8 rounded-lg border px-2 text-xs shadow-sm ${fDevice && fDevice !== selectedId ? "border-primary bg-primary/5 text-primary font-semibold" : "border-input bg-background"}`}
+                          >
+                            <option value={selectedId}>{selected.name} (this device)</option>
+                            {devices.filter(d => d.id !== selectedId).map(d => (
+                              <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                            <option value="">All Devices</option>
+                          </select>
                           {[
                             { val: fStatus, set: setFStatus, opts: [["","All Statuses"],["present","Present"],["late","Late"],["absent","Absent"]] },
                             { val: fMethod, set: setFMethod, opts: [["","All Methods"],["fingerprint","Fingerprint"],["face","Face"],["nfc","NFC/RFID"],["qr","QR Code"],["manual","Manual"]] },

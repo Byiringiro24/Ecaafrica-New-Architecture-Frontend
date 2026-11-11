@@ -175,6 +175,22 @@ export const deviceApi = {
       auth: "school",
     }),
 
+  // Assign device to a tablet (one tablet can have multiple devices)
+  assignTablet: (deviceId: string, tabletId: string) =>
+    apiRequest<Device>(`/devices/${deviceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ tablet_id: tabletId }),
+      auth: "school",
+    }),
+
+  // Remove device from its current tablet
+  unassignTablet: (deviceId: string) =>
+    apiRequest<Device>(`/devices/${deviceId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ tablet_id: null }),
+      auth: "school",
+    }),
+
   // Push students to device
   pushStudents: (id: string, data: PushStudentsRequest) =>
     apiRequest<{ device_id: string; target: any; pushed_count: number; students: any[] }>(

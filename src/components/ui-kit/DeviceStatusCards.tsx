@@ -21,28 +21,32 @@ export type DeviceRecord = {
  * Determine if a device is actually online right now.
  *
  * Single source of truth used by ALL roles: school admin, DOD, boarding, gate-keeper.
- * Uses 10-minute grace window to avoid flickering when no student has scanned recently.
+ * Uses 2-minute grace window that matches the backend pull-logs job timing:
+ *   - pull-logs runs every 5 s
+ *   - marks offline after 3 consecutive failures (~15 s)
+ *   - 2-minute last_seen_at window = safe buffer without counting stale devices
  *
  * Priority:
- *  1. `is_online` field set by the backend heartbeat job / status check endpoint
- *  2. `is_connected` field (from DB — reset to false by heartbeat when tablet unreachable)
- *  3. `last_seen_at` within the last 10 minutes (matches backend grace window)
+ *  1. `is_online` field — backend heartbeat job sets this explicitly
+ *  2. `is_connected` field — pull-logs sets false when tablet is unreachable;
+ *     if explicitly false, device IS offline regardless of last_seen_at
+ *  3. `last_seen_at` within the last 2 minutes (fallback for new/migrated devices)
  *  4. Fall back to offline
  *
  * We deliberately do NOT use `is_active` — that is a registration flag
  * ("this device is configured"), not a real-time connectivity indicator.
  */
 export function isDeviceOnline(device: DeviceRecord): boolean {
-  // Explicit real-time fields — backend heartbeat sets is_connected=false
-  // when the tablet is unreachable so this is authoritative
+  // Explicit real-time fields — backend sets these authoritatively
   if (device.is_online === true) return true;
   if (device.is_online === false) return false;
-  if (device.is_connected === true) return true;
+  // is_connected=false means the pull-logs job explicitly marked it unreachable
   if (device.is_connected === false) return false;
-  // Fall back to last_seen_at within 10 minutes (matches backend grace window)
+  if (device.is_connected === true) return true;
+  // Fall back to last_seen_at within 2 minutes (matches backend grace window)
   if (device.last_seen_at) {
     const age = Date.now() - new Date(device.last_seen_at).getTime();
-    return age < 10 * 60 * 1000;
+    return age < 2 * 60 * 1000;
   }
   return false;
 }
