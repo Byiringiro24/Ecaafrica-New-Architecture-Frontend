@@ -150,23 +150,26 @@ export const tabletApi = {
     }),
 
   // User synchronization
-  getUsers: (tabletId: string) =>
-    apiRequest<any>(`/tablets/${tabletId}/device/users`, {
-      auth: "school",
-    }).then((response) => ({ data: unwrapDeviceResult<{ users: DeviceUser[]; count: number }>(response) })),
+  // deviceUid: optional — routes command to a specific FK623 on multi-device tablets.
+  // Without deviceUid the backend targets whichever FK623 is the single active device.
+  getUsers: (tabletId: string, deviceUid?: string | null) =>
+    apiRequest<any>(
+      `/tablets/${tabletId}/device/users${deviceUid ? `?deviceUid=${encodeURIComponent(deviceUid)}` : ""}`,
+      { auth: "school" }
+    ).then((response) => ({ data: unwrapDeviceResult<{ users: DeviceUser[]; count: number }>(response) })),
   
-  pushUser: (data: PushUserRequest) =>
+  pushUser: (data: PushUserRequest & { deviceUid?: string | null }) =>
     apiRequest<{ success: boolean }>(`/tablets/${data.tabletId}/device/users`, {
       method: "POST",
       body: JSON.stringify(data),
       auth: "school",
     }),
   
-  removeUser: (tabletId: string, userId: string) =>
-    apiRequest<{ success: boolean }>(`/tablets/${tabletId}/device/users/${userId}`, {
-      method: "DELETE",
-      auth: "school",
-    }),
+  removeUser: (tabletId: string, userId: string, deviceUid?: string | null) =>
+    apiRequest<{ success: boolean }>(
+      `/tablets/${tabletId}/device/users/${userId}${deviceUid ? `?deviceUid=${encodeURIComponent(deviceUid)}` : ""}`,
+      { method: "DELETE", auth: "school" }
+    ),
 
   // Attendance log synchronization
   pullLogs: (data: PullLogsRequest) =>
@@ -182,18 +185,18 @@ export const tabletApi = {
     })),
 
   // Clear all attendance logs stored on the FK623 device (irreversible)
-  clearLogs: (tabletId: string) =>
-    apiRequest<{ success: boolean; message?: string }>(`/tablets/${tabletId}/device/clear-logs`, {
-      method: "POST",
-      auth: "school",
-    }),
+  clearLogs: (tabletId: string, deviceUid?: string | null) =>
+    apiRequest<{ success: boolean; message?: string }>(
+      `/tablets/${tabletId}/device/clear-logs${deviceUid ? `?deviceUid=${encodeURIComponent(deviceUid)}` : ""}`,
+      { method: "POST", auth: "school" }
+    ),
 
   // Delete all users enrolled on the FK623 device (irreversible)
-  clearUsers: (tabletId: string) =>
-    apiRequest<{ success: boolean; message?: string }>(`/tablets/${tabletId}/device/clear-all`, {
-      method: "POST",
-      auth: "school",
-    }),
+  clearUsers: (tabletId: string, deviceUid?: string | null) =>
+    apiRequest<{ success: boolean; message?: string }>(
+      `/tablets/${tabletId}/device/clear-all${deviceUid ? `?deviceUid=${encodeURIComponent(deviceUid)}` : ""}`,
+      { method: "POST", auth: "school" }
+    ),
 
   // Reset / reboot the FK623 device
   resetDevice: (tabletId: string) =>
