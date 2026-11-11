@@ -608,7 +608,7 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
   const [editForm, setEditForm] = useState({
     name: "", school_id: "", mode: "gate" as "gate" | "boarding" | "classroom",
     location: "", device_ip: "", device_port: "4370", license_number: "0",
-    device_serial: "", product_name: "",
+    device_serial: "", product_name: "", device_uid: "",
   });
 
   const handleCreate = async (e: FormEvent) => {
@@ -676,6 +676,7 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
       license_number: String((d as any).license_number ?? 0),
       device_serial: (d as any).device_serial ?? "",
       product_name: (d as any).product_name ?? "",
+      device_uid: (d as any).device_uid ?? "",
     });
   };
 
@@ -713,6 +714,7 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
         license_number: editForm.license_number ? Number(editForm.license_number) : undefined,
         device_serial: editForm.device_serial || undefined,
         product_name: editForm.product_name || undefined,
+        ...(editForm.device_uid.trim() ? { device_uid: editForm.device_uid.trim() } : {}),
       } as any);
       toast.success("Device updated");
       setEditingId(null);
@@ -739,7 +741,16 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
           </SaSelect>
           <div className="grid gap-3 md:grid-cols-2">
             <SaInput label="Device Name *" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="Main Gate Reader" required />
-            <SaInput label="Device UID *" value={form.device_uid} onChange={e => setForm({...form, device_uid: e.target.value})} placeholder="FK623-GATE-01" required />
+            <div>
+              <SaInput
+                label="Bridge Device UUID *"
+                value={form.device_uid}
+                onChange={e => setForm({...form, device_uid: e.target.value})}
+                placeholder="e.g. b7bd78b6-ba72-413f-b8d9-2b9d8752e043"
+                required
+              />
+              <p className="mt-1 text-[11px] text-amber-700">Copy from laptop bridge → Devices page → click <b>copy</b> next to the UUID</p>
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <SaSelect label="Mode *" value={form.mode} onChange={e => setForm({...form, mode: e.target.value as any})}>
@@ -821,6 +832,10 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
                       </SaSelect>
                       <div className="grid gap-2 grid-cols-2">
                         <SaInput label="Name" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} required />
+                        <div>
+                          <SaInput label="Bridge UUID" value={editForm.device_uid} onChange={e => setEditForm({...editForm, device_uid: e.target.value})} placeholder="b7bd78b6-…" />
+                          <p className="mt-0.5 text-[10px] text-amber-700">Copy from laptop bridge Devices page</p>
+                        </div>
                         <SaSelect label="Mode" value={editForm.mode} onChange={e => setEditForm({...editForm, mode: e.target.value as any})}>
                           <option value="gate">Gate</option>
                           <option value="boarding">Boarding</option>

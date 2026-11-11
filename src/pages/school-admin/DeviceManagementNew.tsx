@@ -169,6 +169,11 @@ export default function DeviceManagementNew() {
           firmware_version: formData.firmware_version || null,
         };
 
+        // Save device_uid when editing so it can be linked to the bridge UUID
+        if (formData.device_uid.trim()) {
+          updateData.device_uid = formData.device_uid.trim();
+        }
+
         // Only include pin if provided
         if (formData.pin) {
           updateData.pin = formData.pin;
@@ -530,20 +535,23 @@ export default function DeviceManagementNew() {
 
             <form onSubmit={handleSubmit}>
               <div className="space-y-4 py-4">
-                {/* Device UID - Only for creation */}
-                {!editingDevice && (
-                  <div className="space-y-2">
-                    <Label htmlFor="device_uid">Device UID *</Label>
-                    <Input
-                      id="device_uid"
-                      value={formData.device_uid}
-                      onChange={(e) => setFormData({ ...formData, device_uid: e.target.value })}
-                      placeholder="DEV-GATE-001"
-                      required
-                    />
-                    <p className="text-xs text-gray-500">Unique identifier for this device</p>
-                  </div>
-                )}
+                {/* Device UID — shown for both create and edit */}
+                <div className="space-y-2">
+                  <Label htmlFor="device_uid">Bridge Device UUID *</Label>
+                  <Input
+                    id="device_uid"
+                    value={formData.device_uid}
+                    onChange={(e) => setFormData({ ...formData, device_uid: e.target.value })}
+                    placeholder="e.g. b7bd78b6-ba72-413f-b8d9-2b9d8752e043"
+                    required={!editingDevice}
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-xs text-gray-500">
+                    {editingDevice
+                      ? "Paste the UUID from the laptop bridge — go to Devices page on the bridge, find this device and click Copy next to its UUID."
+                      : "Unique identifier — copy the UUID from the laptop bridge Devices page."}
+                  </p>
+                </div>
 
                 {/* Device Name */}
                 <div className="space-y-2">
