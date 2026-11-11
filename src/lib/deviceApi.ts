@@ -317,4 +317,100 @@ export const platformHardwareApi = {
       method: "DELETE",
       auth: "platform",
     }),
+
+  // ── Platform Device Proxy — control FK623 via tablet bridge over VPN ──────
+  pingTablet: (id: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${id}/ping`, { auth: "platform" }),
+
+  getDeviceStatus: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/status`, { auth: "platform" }),
+
+  connectDevice: (tabletId: string, config?: { ipAddress?: string; port?: number; license?: number }) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/connect`, {
+      method: "POST",
+      body: JSON.stringify(config || {}),
+      auth: "platform",
+    }),
+
+  disconnectDevice: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/disconnect`, {
+      method: "POST",
+      auth: "platform",
+    }),
+
+  getDeviceUsers: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/users`, { auth: "platform" }),
+
+  addDeviceUser: (tabletId: string, data: { userId: string; name: string; photoUrl?: string }) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/users`, {
+      method: "POST",
+      body: JSON.stringify(data),
+      auth: "platform",
+    }),
+
+  deleteDeviceUser: (tabletId: string, userId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/users/${userId}`, {
+      method: "DELETE",
+      auth: "platform",
+    }),
+
+  renameDeviceUser: (tabletId: string, userId: string, name: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+      auth: "platform",
+    }),
+
+  pushStudents: (tabletId: string, studentIds?: string[]) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/push-students`, {
+      method: "POST",
+      body: JSON.stringify(studentIds ? { studentIds } : {}),
+      auth: "platform",
+    }),
+
+  pullLogs: (tabletId: string, readMark = 0) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/pull-logs`, {
+      method: "POST",
+      body: JSON.stringify({ readMark }),
+      auth: "platform",
+    }),
+
+  syncTime: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/sync-time`, {
+      method: "POST",
+      auth: "platform",
+    }),
+
+  clearLogs: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/clear-logs`, {
+      method: "POST",
+      auth: "platform",
+    }),
+
+  clearAll: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/clear-all`, {
+      method: "POST",
+      auth: "platform",
+    }),
+
+  powerOff: (tabletId: string) =>
+    apiRequest<any>(`/platform/hardware/tablets/${tabletId}/device/poweroff`, {
+      method: "POST",
+      auth: "platform",
+    }),
+
+  // Dev password management
+  setTabletDevPassword: (id: string, password: string | null) =>
+    apiRequest<any>(`/platform/hardware/tablets/${id}/dev-password`, {
+      method: "PATCH",
+      body: JSON.stringify({ password }),
+      auth: "platform",
+    }),
+
+  setAllTabletsDevPassword: (password: string | null) =>
+    apiRequest<any>(`/platform/hardware/tablets/dev-password/all`, {
+      method: "PATCH",
+      body: JSON.stringify({ password }),
+      auth: "platform",
+    }),
 };
