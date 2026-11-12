@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { getAvailableRoles, getSchoolAuth, roleHome, switchRole } from "@/lib/schoolAuth";
 
@@ -32,6 +33,25 @@ function RoleSelectionPage() {
   const { redirect } = Route.useSearch();
   const auth = getSchoolAuth();
   const roles = getAvailableRoles();
+
+  // If only one role, auto-redirect immediately — no need to show picker
+  useEffect(() => {
+    if (roles.length === 1) {
+      switchRole(roles[0]);
+      window.location.replace(redirect || roleHome(roles[0]));
+    }
+    if (roles.length === 0 && !auth) {
+      window.location.replace("/login");
+    }
+  }, []);
+
+  if (roles.length <= 1) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background">
+        <p className="text-muted-foreground text-sm">Redirecting…</p>
+      </main>
+    );
+  }
 
   const choose = (role: string) => {
     switchRole(role);

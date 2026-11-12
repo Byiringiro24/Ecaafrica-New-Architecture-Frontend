@@ -82,8 +82,10 @@ export const getAvailableRoles = (): string[] => {
   if (!auth?.user) return [];
   const primary = auth.user.role ?? null;
   const secondary = (auth.user.roles ?? []).map((r) => r.slug).filter(Boolean);
+  // Deduplicate — user_roles sometimes includes the primary role again
   const all = primary ? [primary, ...secondary.filter((r) => r !== primary)] : secondary;
-  return all;
+  // Remove duplicates
+  return [...new Set(all)];
 };
 
 // ─── Role checks (check primary AND secondary roles) ─────────────────────────
