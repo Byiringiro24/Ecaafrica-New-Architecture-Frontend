@@ -561,37 +561,42 @@ function DevicesTab({ devices, tablets, schools, onRefresh }: {
   const [deviceLiveStatus, setDeviceLiveStatus] = useState<Record<string, boolean | null>>({});
   const [usersModalDevice, setUsersModalDevice] = useState<PlatformDevice | null>(null);
 
-  // Ping a device by pinging its linked tablet's health endpoint
+  // Ping a device — sends STATUS to the FK623 via its bridge on the school LAN
+  // Each device pings independently through its own bridge process
   const handlePingDevice = async (d: PlatformDevice) => {
     const tabletId = d.tablet_id ?? d.tablet?.id;
     if (!tabletId) { toast.error("Device is not linked to a tablet — cannot ping"); return; }
     setPingingDevice(d.id);
     try {
-      const res = await apiRequest<any>(`/platform/hardware/tablets/${tabletId}/ping`, { auth: "platform" });
-      const online = res?.healthy === true || res?.success === true;
-      setDeviceLiveStatus(prev => ({ ...prev, [d.id]: online }));
-      toast[online ? "success" : "warning"](
-        online
-          ? `${d.name} bridge is reachable — device can sync`
-          : `${d.name} bridge not reachable — check WireGuard and FKBridge`
-      );
-      // Refresh to pick up updated is_connected from DB
+      // Use per-device ping endpoint: server → bridge (WireGuard) → FK623 (LAN)
+      const res = await apiRequest<any>(`/platform/hardware/devices/${d.id}/ping`, { auth: "platform" });
+      const fk623Reachable = res?.fk623Reachable === true || res?.connected === true;
+      const bridgeReachable = res?.bridgeReachable === true || fk623Reachable;
+
+      setDeviceLiveStatus(prev => ({ ...prev, [d.id]: fk623Reachable }));
+
+      if (fk623Reachable) {
+        toast.success(`${d.name} — FK623 is connected and responding on school LAN`);
+      } else if (bridgeReachable) {
+        toast.warning(`${d.name} — Bridge reachable but FK623 not responding. Check device power and LAN cable.`);
+      } else {
+        toast.warning(`${d.name} — Bridge not reachable. Check WireGuard VPN and FKBridge app.`);
+      }
       onRefresh();
     } catch {
       setDeviceLiveStatus(prev => ({ ...prev, [d.id]: false }));
-      toast.warning(`${d.name} bridge not reachable`);
+      toast.warning(`${d.name} — ping failed`);
     } finally { setPingingDevice(null); }
   };
 
-  // Auto-ping all linked devices on mount
+  // Auto-ping all linked devices on mount — uses per-device endpoint for real FK623 status
   useEffect(() => {
     for (const d of devices) {
-      const tabletId = d.tablet_id ?? (d.tablet as any)?.id;
-      if (!tabletId) continue;
-      apiRequest<any>(`/platform/hardware/tablets/${tabletId}/ping`, { auth: "platform" })
+      if (!d.tablet_id) continue;
+      apiRequest<any>(`/platform/hardware/devices/${d.id}/ping`, { auth: "platform" })
         .then(res => {
-          const online = res?.healthy === true || res?.success === true;
-          setDeviceLiveStatus(prev => ({ ...prev, [d.id]: online }));
+          const fk623Reachable = res?.fk623Reachable === true || res?.connected === true;
+          setDeviceLiveStatus(prev => ({ ...prev, [d.id]: fk623Reachable }));
         })
         .catch(() => setDeviceLiveStatus(prev => ({ ...prev, [d.id]: false })));
     }
