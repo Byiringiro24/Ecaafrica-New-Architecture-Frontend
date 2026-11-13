@@ -55,7 +55,7 @@ const tierStyle = (tier: ConnTier) => ({
   full:    { dot: "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)] animate-pulse", text: "text-green-600", label: "Connected",    desc: "FK623 + Tablet + WireGuard active" },
   bridge:  { dot: "bg-yellow-400 shadow-[0_0_8px_rgba(234,179,8,0.6)] animate-pulse", text: "text-yellow-600", label: "Bridge only", desc: "Tablet reachable — FK623 not connected" },
   offline: { dot: "bg-gray-300",                                                      text: "text-muted-foreground",  label: "Offline",      desc: "Bridge not reachable via WireGuard" },
-});
+})[tier];
 
 /** Sidebar dot color per device — shows 3-tier status from device list */
 const deviceDotClass = (d: Device) => {
