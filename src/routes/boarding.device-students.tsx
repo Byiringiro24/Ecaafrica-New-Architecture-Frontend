@@ -259,10 +259,16 @@ function DeviceStudentsPage() {
   const selectedDeviceLabel = device?.name ?? (deviceId ? "Selected device" : "No device selected");
   const selectedDeviceLocation = device?.location ?? "—";
   const selectedDeviceLastSync = deviceStatus?.last_sync_at ? new Date(deviceStatus.last_sync_at).toLocaleString() : device?.lastSync ?? "No sync yet";
-  const selectedDeviceIsOnline = deviceStatus
-    ? Boolean(deviceStatus.connected)
-    : device ? isDeviceOnline(device as any) : false;
-  const selectedDeviceStatusLabel = selectedDeviceIsOnline ? "Online" : "Offline";
+  // Use 3-tier connection status: full = FK623+bridge, bridge = bridge only, offline = nothing
+  const selectedDeviceTier: "full" | "bridge" | "offline" = deviceStatus
+    ? (deviceStatus.connected ? "full" : "offline")
+    : ((device as any)?.connection_tier ?? (device ? (device.isConnected ? "full" : "offline") : "offline"));
+  const selectedDeviceIsOnline = selectedDeviceTier !== "offline";
+  const selectedDeviceStatusLabel = selectedDeviceTier === "full"
+    ? "Connected"
+    : selectedDeviceTier === "bridge"
+    ? "Bridge only"
+    : "Offline";
   const selectedDeviceSyncState = getDeviceSyncState(deviceStatus?.last_sync_status ?? device?.lastSyncStatus ?? null);
   const selectedDeviceSyncMessage = deviceStatus?.message ?? device?.lastStatusMessage ?? "No push activity yet";
   const hasSelectedDevice = Boolean(deviceId);
@@ -546,8 +552,8 @@ function DeviceStudentsPage() {
         <StatCard
           label="Device Status"
           value={selectedDeviceStatusLabel}
-          tone={selectedDeviceIsOnline ? "success" : "warning"}
-          icon={selectedDeviceIsOnline ? <Wifi className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+          tone={selectedDeviceTier === "full" ? "success" : selectedDeviceTier === "bridge" ? "warning" : "warning"}
+          icon={selectedDeviceTier === "full" ? <Wifi className="h-5 w-5" /> : selectedDeviceTier === "bridge" ? <Wifi className="h-5 w-5 text-amber-500" /> : <WifiOff className="h-5 w-5" />}
         />
       </div>
 

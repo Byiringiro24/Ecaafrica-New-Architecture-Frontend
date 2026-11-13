@@ -53,6 +53,7 @@ import { localDateInputValue } from "@/lib/dateInput";
 import { studentSearchText, studentIdNumber } from "@/lib/studentIdentity";
 import { DEFAULT_FK623_CONFIG } from "@/lib/tabletApi";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui-kit/ConfirmDialog";
 
 export const Route = createFileRoute("/boarding/devices")({
   component: ServerCommandCenter,
@@ -245,6 +246,7 @@ const buildDeviceUserId = (student: Student) => {
 };
 
 function ServerCommandCenter() {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
@@ -669,7 +671,13 @@ function ServerCommandCenter() {
       toast.error("Select a tablet first");
       return;
     }
-    if (!window.confirm("Power off the physical FK623 device?")) return;
+    const ok = await confirm({
+      title: "Power off the FK623 device?",
+      description: "This sends a power-off command to the biometric device. It will shut down and need to be manually powered on again. Any active scan sessions will be interrupted.",
+      confirmLabel: "Power Off",
+      variant: "warning",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await apiRequest(`/tablets/${selectedTablet.id}/device/poweroff`, {
@@ -737,7 +745,12 @@ function ServerCommandCenter() {
 
   async function deleteDeviceUser(userId?: string) {
     if (!selectedTablet?.id || !userId) return;
-    if (!window.confirm(`Delete device user ${userId}?`)) return;
+    const ok = await confirm({
+      title: `Delete device user ${userId}?`,
+      description: "This permanently removes the user's biometric enrollment (fingerprint, face, card) from the FK623 device. The student record on the server is kept. You can re-push the student to restore their enrollment.",
+      confirmLabel: "Delete User",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await apiRequest(`/tablets/${selectedTablet.id}/device/users/${encodeURIComponent(userId)}`, {
@@ -756,7 +769,14 @@ function ServerCommandCenter() {
   async function clearDeviceData(kind: "logs" | "all") {
     if (!selectedTablet?.id) return;
     const label = kind === "all" ? "all users and logs" : "device logs";
-    if (!window.confirm(`Clear ${label} from the device?`)) return;
+    const ok = await confirm({
+      title: `Clear ${label} from the device?`,
+      description: kind === "all"
+        ? "This permanently deletes ALL enrolled users (fingerprints, face data) AND attendance logs from the FK623 device. This cannot be undone. You will need to re-push students to restore user enrollment."
+        : "This permanently deletes all attendance logs stored on the FK623 device. Logs already pulled to the server are kept. This cannot be undone.",
+      confirmLabel: kind === "all" ? "Clear All Data" : "Clear Logs",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await apiRequest(`/tablets/${selectedTablet.id}/device/${kind === "all" ? "clear-all" : "clear-logs"}`, {
@@ -931,7 +951,12 @@ function ServerCommandCenter() {
 
   async function deleteSession(sessionId: string) {
     if (!selectedDevice?.id) return;
-    if (!window.confirm("Delete this attendance session?")) return;
+    const ok = await confirm({
+      title: "Delete this attendance session?",
+      description: "This permanently removes the session and all its attendance windows. Historical attendance records are kept. This cannot be undone.",
+      confirmLabel: "Delete Session",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await apiRequest(`/devices/${selectedDevice.id}/sessions/${sessionId}`, {
@@ -949,7 +974,14 @@ function ServerCommandCenter() {
 
   async function markAbsent(session: DeviceSession) {
     if (!selectedDevice?.id) return;
-    if (!window.confirm(`Mark missing students absent for ${session.name} on ${absentDate}?`)) return;
+    const ok = await confirm({
+      title: `Mark absent for ${session.name}?`,
+      description: `Students who have not scanned in for "${session.name}" on ${absentDate} will be marked absent. This creates attendance records for all missing students. It can be corrected later but generates notifications if SMS is configured.`,
+      confirmLabel: "Mark Absent",
+      variant: "warning",
+      countdown: 3,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const result = await apiRequest<any>(`/devices/${selectedDevice.id}/sessions/${session.id}/mark-absent`, {
@@ -1080,6 +1112,7 @@ function ServerCommandCenter() {
 
   return (
     <AppLayout title="Attendance Devices" subtitle="Configure tablets, biometric devices, and student pushes">
+      {ConfirmDialog}
       <div className="space-y-6 pb-6">
         <section className="overflow-hidden rounded-3xl border border-primary/10 bg-gradient-to-br from-primary/10 via-background to-background p-5 shadow-[0_18px_60px_-30px_rgba(33,65,127,0.45)] md:p-6">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">

@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { localDateInputValue } from "@/lib/dateInput";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { exportToExcel } from "@/lib/exportExcel";
+import { useConfirm } from "@/components/ui-kit/ConfirmDialog";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Tab          = "overview" | "push" | "users" | "scans" | "reports";
@@ -56,8 +57,13 @@ const tierStyle = (tier: ConnTier) => ({
   offline: { dot: "bg-gray-300",                                                      text: "text-muted-foreground",  label: "Offline",      desc: "Bridge not reachable via WireGuard" },
 });
 
-/** Sidebar dot color per device (uses cached last_seen_at) */
+/** Sidebar dot color per device — shows 3-tier status from device list */
 const deviceDotClass = (d: Device) => {
+  const tier = (d as any).connection_tier as ConnTier | undefined;
+  if (tier === "full") return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
+  if (tier === "bridge") return "bg-yellow-400 shadow-[0_0_6px_rgba(234,179,8,0.4)] animate-pulse";
+  if (tier === "offline") return "bg-gray-300";
+  // Fallback to is_connected for older API responses
   if (!isLiveOnline(d)) return "bg-gray-300";
   return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
 };
@@ -129,6 +135,7 @@ function Collapse({ title, icon: Icon, children, open: controlledOpen, onToggle,
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function DeviceManagement() {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [activeTab,  setActiveTab]  = useState<Tab>("overview");
   const [devices,    setDevices]    = useState<Device[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -331,7 +338,8 @@ export default function DeviceManagement() {
   const isOnline  = isLiveOnline(selected);
   const tabletId  = selected?.tablet_id ?? null;
   const fkStatus  = status?.device_status ?? status?.data ?? null;
-  const connTier  = getConnectionTier(status);
+  // Use live status tier if available, otherwise fall back to device list tier
+  const connTier  = getConnectionTier(status ?? { connection_tier: (selected as any)?.connection_tier });
   const tierInfo  = tierStyle(connTier);
   // Push is only available when FK623 + Tablet + WireGuard are all active
   const canPush   = connTier === "full";
@@ -373,10 +381,57 @@ export default function DeviceManagement() {
   const deviceUid = selected?.device_uid ?? null;
 
   const handleGetUsers   = async () => { if (!tabletId) { toast.error("No tablet linked"); return; } setUsersLoading(true); try { const r = await tabletApi.getUsers(tabletId, deviceUid); setDeviceUsers(r.data?.users ?? []); toast.success(`${r.data?.count ?? 0} enrolled users`); } catch (e: any) { toast.error(e?.message ?? "Failed"); } finally { setUsersLoading(false); } };
-  const handleDeleteUser = (uid: string) => act(async () => { if (!tabletId) throw new Error("No tablet"); if (!window.confirm(`Remove user ${uid} from device?`)) return; await tabletApi.removeUser(tabletId, uid, deviceUid); toast.success("User removed"); setDeviceUsers(p => p.filter(u => (u.userId ?? u.id) !== uid)); });
-  const handleClearLogs  = () => act(async () => { if (!tabletId) throw new Error("No tablet"); if (!window.confirm(`Delete ALL logs from "${selected?.name}"?\n\nLogs pulled to the server are kept. This cannot be undone.`)) return; await tabletApi.clearLogs(tabletId, deviceUid); toast.success("Logs cleared from device"); void loadStatus(); });
-  const handleClearUsers = () => act(async () => { if (!tabletId) throw new Error("No tablet"); if (!window.confirm(`Delete ALL enrolled users from "${selected?.name}"?\n\nAll fingerprints and face data will be lost. Re-push students to restore.`)) return; if (!window.confirm("Confirm — this is irreversible.")) return; await tabletApi.clearUsers(tabletId, deviceUid); toast.success("All users cleared"); setDeviceUsers([]); void loadStatus(); });
-  const handleReboot     = () => act(async () => { if (!tabletId) throw new Error("No tablet"); if (!window.confirm(`Reboot "${selected?.name}"? It will reconnect in ~30–60 seconds.`)) return; await tabletApi.resetDevice(tabletId); toast.success("Reboot command sent"); setTimeout(() => void loadStatus(true), 35_000); });
+  const handleDeleteUser = (uid: string) => act(async () => {
+    if (!tabletId) throw new Error("No tablet");
+    const ok = await confirm({
+      title: `Remove user ${uid} from device?`,
+      description: "This deletes the user's biometric enrollment (fingerprint/face) from the FK623 device. The student record on the server is kept. You can re-push the student to restore enrollment.",
+      confirmLabel: "Remove User",
+    });
+    if (!ok) return;
+    await tabletApi.removeUser(tabletId, uid, deviceUid);
+    toast.success("User removed");
+    setDeviceUsers(p => p.filter(u => (u.userId ?? u.id) !== uid));
+  });
+  const handleClearLogs  = () => act(async () => {
+    if (!tabletId) throw new Error("No tablet");
+    const ok = await confirm({
+      title: `Clear all logs from "${selected?.name}"?`,
+      description: "This permanently deletes all attendance logs stored on the FK623 device. Logs already pulled to the server are kept. This cannot be undone.",
+      confirmLabel: "Clear Logs",
+    });
+    if (!ok) return;
+    await tabletApi.clearLogs(tabletId, deviceUid);
+    toast.success("Logs cleared from device");
+    void loadStatus();
+  });
+  const handleClearUsers = () => act(async () => {
+    if (!tabletId) throw new Error("No tablet");
+    const ok = await confirm({
+      title: `Delete ALL enrolled users from "${selected?.name}"?`,
+      description: "All fingerprints and face data stored on the FK623 device will be permanently lost. You will need to re-push students to restore them. This cannot be undone.",
+      confirmLabel: "Delete All Users",
+    });
+    if (!ok) return;
+    await tabletApi.clearUsers(tabletId, deviceUid);
+    toast.success("All users cleared");
+    setDeviceUsers([]);
+    void loadStatus();
+  });
+  const handleReboot = () => act(async () => {
+    if (!tabletId) throw new Error("No tablet");
+    const ok = await confirm({
+      title: `Reboot "${selected?.name}"?`,
+      description: "The FK623 device will power off and restart. It will reconnect in approximately 30–60 seconds. Any active scans in progress will be interrupted.",
+      confirmLabel: "Reboot Device",
+      variant: "warning",
+      countdown: 3,
+    });
+    if (!ok) return;
+    await tabletApi.resetDevice(tabletId);
+    toast.success("Reboot command sent");
+    setTimeout(() => void loadStatus(true), 35_000);
+  });
 
   const handlePushStudents = async () => {
     if (!selectedId) return;
@@ -542,6 +597,7 @@ export default function DeviceManagement() {
   // ─────────────────────────────────────────────────────────────────────────────
   return (
     <AppLayout title="Device Management" subtitle="Manage biometric devices, push students, pull logs and view attendance">
+      {ConfirmDialog}
 
       {/* Info banner */}
       <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
