@@ -373,7 +373,13 @@ export default function DeviceManagement() {
   // ── Actions ───────────────────────────────────────────────────────────────
   const act = async (fn: () => Promise<void>) => { try { await fn(); } catch (e: any) { toast.error(e?.message ?? "Operation failed"); } };
 
-  const handlePullLogs   = () => act(async () => { if (!tabletId) throw new Error("No tablet"); const r = await tabletApi.pullLogs({ tabletId, readMark: 0 }); toast.success(`Pulled ${r.data?.savedCount ?? 0} log(s) — ${r.data?.duplicateCount ?? 0} duplicates`); void loadLogs(); });
+  const handlePullLogs = () => act(async () => {
+    if (!tabletId) throw new Error("No tablet");
+    // Pass deviceUid so the backend pulls logs from the correct FK623
+    const r = await tabletApi.pullLogs({ tabletId, readMark: 0, deviceUid: deviceUid ?? undefined });
+    toast.success(`Pulled ${r.data?.savedCount ?? 0} log(s) — ${r.data?.duplicateCount ?? 0} duplicates`);
+    void loadLogs();
+  });
   const handleSyncTime   = () => act(async () => { if (!tabletId) throw new Error("No tablet"); await tabletApi.syncTime(tabletId); toast.success("Device time synced to server"); });
 
   // device_uid routes commands to the specific FK623 on multi-device tablets.
@@ -1060,7 +1066,7 @@ export default function DeviceManagement() {
                                 </select>
                               </div>
                             )}
-                            <button onClick={handlePushStudents} disabled={pushing || (pushMode === "section" && !pushSectionId)}
+                            <button onClick={handlePushStudents} disabled={pushing || !canPush || (pushMode === "section" && !pushSectionId)}
                               className="h-10 inline-flex items-center gap-2 rounded-lg bg-primary text-white px-5 text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 shadow-sm transition-all">
                               {pushing ? <><RefreshCw className="h-4 w-4 animate-spin" /> Pushing…</> : <><Upload className="h-4 w-4" /> Push Students</>}
                             </button>
@@ -1109,7 +1115,7 @@ export default function DeviceManagement() {
                         icon={Users}
                         badge={deviceUsers.length > 0 ? <span className="rounded-full bg-blue-100 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-700">{deviceUsers.length}</span> : undefined}
                         action={
-                          <button onClick={handleGetUsers} disabled={usersLoading || !isOnline}
+                          <button onClick={handleGetUsers} disabled={usersLoading || connTier === "offline"}
                             className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50 shadow-sm transition-all">
                             <RefreshCw className={`h-3.5 w-3.5 ${usersLoading ? "animate-spin" : ""}`} />
                             {usersLoading ? "Loading…" : "Fetch from Device"}

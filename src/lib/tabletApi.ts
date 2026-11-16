@@ -61,6 +61,7 @@ export type ConnectDeviceRequest = {
 export type PullLogsRequest = {
   tabletId: string;
   readMark?: number;
+  deviceUid?: string | null;
 };
 
 export type PushUserRequest = {
@@ -177,7 +178,10 @@ export const tabletApi = {
       `/tablets/${data.tabletId}/device/pull-logs`,
       {
         method: "POST",
-        body: JSON.stringify({ readMark: data.readMark || 0 }),
+        body: JSON.stringify({
+          readMark: data.readMark || 0,
+          ...(data.deviceUid ? { deviceUid: data.deviceUid } : {}),
+        }),
         auth: "school",
       }
     ).then((response) => ({
