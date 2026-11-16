@@ -34,6 +34,7 @@ export type Device = {
   tablet_id?: string | null;
   status: string;
   is_online: boolean;
+  connection_tier?: "full" | "bridge" | "offline" | null;
 };
 
 export type Tablet = {

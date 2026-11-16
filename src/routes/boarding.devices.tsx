@@ -731,6 +731,12 @@ function ServerCommandCenter() {
       toast.error("Select a tablet first");
       return;
     }
+    // Check device online status before attempting — backend will also guard, but
+    // showing the reason here gives immediate feedback without a 503 round-trip.
+    if (selectedDevice && !isDeviceOnline(selectedDevice as any)) {
+      toast.error("Device is offline. Check the bridge connection and WireGuard VPN first.");
+      return;
+    }
     setBusy(true);
     try {
       const result = await apiRequest<any>(`/tablets/${selectedTablet.id}/device/users`, { auth: "school" });
