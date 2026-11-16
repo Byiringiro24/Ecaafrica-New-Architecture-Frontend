@@ -16,6 +16,14 @@ import { apiRequest } from "@/lib/api";
 import { deviceApi, type Device, type Tablet } from "@/lib/deviceApi";
 import { tabletApi } from "@/lib/tabletApi";
 import { fetchDeviceLogs } from "@/lib/device-logs-api";
+import {
+  useLiveDeviceStatuses,
+  invalidateLiveStatusCache,
+  tierDotClass,
+  tierLabel,
+  tierTextClass,
+  type LiveDeviceStatus,
+} from "@/lib/liveDeviceStatus";
 import type { DeviceLog } from "@/lib/device-logs-types";
 import { Avatar } from "@/components/ui-kit/Avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,15 +65,15 @@ const tierStyle = (tier: ConnTier) => ({
   offline: { dot: "bg-gray-300",                                                      text: "text-muted-foreground",  label: "Offline",      desc: "Bridge not reachable via WireGuard" },
 })[tier];
 
-/** Sidebar dot color per device — shows 3-tier status from device list */
+/** Sidebar dot color per device — directly reads connection_tier (3-tier status) */
 const deviceDotClass = (d: Device) => {
-  const tier = (d as any).connection_tier as ConnTier | undefined;
-  if (tier === "full") return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
+  const tier = d.connection_tier as "full" | "bridge" | "offline" | undefined;
+  if (tier === "full")   return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
   if (tier === "bridge") return "bg-yellow-400 shadow-[0_0_6px_rgba(234,179,8,0.4)] animate-pulse";
   if (tier === "offline") return "bg-gray-300";
-  // Fallback to is_connected for older API responses
-  if (!isLiveOnline(d)) return "bg-gray-300";
-  return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
+  // Fallback for devices not yet live-checked (connection_tier not set yet)
+  if (isLiveOnline(d)) return "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse";
+  return "bg-gray-300";
 };
 
 const scopeColor  = (s?: string) => { if (s === "gate") return "bg-emerald-100 text-emerald-700 border-emerald-200"; if (s === "dormitory") return "bg-blue-100 text-blue-700 border-blue-200"; if (s === "dining_hall") return "bg-amber-100 text-amber-700 border-amber-200"; if (s === "classroom") return "bg-violet-100 text-violet-700 border-violet-200"; return "bg-gray-100 text-gray-600 border-gray-200"; };
@@ -140,9 +148,21 @@ export default function DeviceManagement() {
   const [devices,    setDevices]    = useState<Device[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [devLoading, setDevLoading] = useState(true);
-  const [status,        setStatus]        = useState<any>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
-  const statusFlight = useRef(false);
+
+  // ── Live status — real-time bridge pings, NOT database values ─────────────
+  // Polling every 30s. On first mount the hook shows checking=true for ~3-8s
+  // while pinging bridges, then updates all sidebar dots to real status.
+  const {
+    statuses: liveStatuses,
+    checking: statusChecking,
+    refresh: refreshLiveStatus,
+    getTier,
+    isConnected: isLiveConnected,
+  } = useLiveDeviceStatuses(30_000);
+
+  // The status panel for the selected device (from live status map)
+  const liveSelected: LiveDeviceStatus | undefined = liveStatuses.find(s => s.id === selectedId);
+  const statusLoading = statusChecking && liveStatuses.length === 0;
 
   // Reference data from school API
   const [classes,     setClasses]     = useState<ClassRecord[]>([]);
@@ -222,29 +242,12 @@ export default function DeviceManagement() {
       const list = res.data ?? [];
       setDevices(list);
       setSelectedId(cur => cur || list[0]?.id || "");
+      // Trigger a fresh live-status check after loading the device list
+      invalidateLiveStatusCache();
+      refreshLiveStatus();
     } catch (e: any) { toast.error(e?.message ?? "Failed to load devices"); }
     finally { setDevLoading(false); }
-  }, []);
-
-  const loadStatus = useCallback(async (silent = false) => {
-    if (!selectedId || statusFlight.current) return;
-    statusFlight.current = true;
-    if (!silent) setStatusLoading(true);
-    try {
-      const res = await deviceApi.getStatus(selectedId);
-      setStatus(res);
-      // Only update the device list if the online/connected status actually changed
-      // — prevents unnecessary re-renders that cause sidebar flickering every 15s
-      setDevices(p => {
-        const cur = p.find(d => d.id === selectedId);
-        const newOnline = res?.is_online ?? false;
-        const newConnected = res?.is_connected ?? false;
-        if (!cur || (cur.is_online === newOnline && cur.is_connected === newConnected)) return p;
-        return p.map(d => d.id === selectedId ? { ...d, is_online: newOnline, is_connected: newConnected } : d);
-      });
-    } catch { setStatus({ is_online: false, is_connected: false }); }
-    finally { statusFlight.current = false; if (!silent) setStatusLoading(false); }
-  }, [selectedId]);
+  }, [refreshLiveStatus]);
 
   const loadSessions = useCallback(async () => {
     if (!selectedId) return;
@@ -301,6 +304,18 @@ export default function DeviceManagement() {
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => { void loadDevices(); }, []);
   useEffect(() => {
+    // Auto-pull logs immediately when a device transitions to "full" (connected).
+    // This ensures logs are synced the moment WireGuard + bridge + FK623 all come up.
+    if (liveStatuses.length === 0) return;
+    for (const ls of liveStatuses) {
+      if (ls.connection_tier === "full" && ls.tablet_id) {
+        // Fire-and-forget — never block the UI
+        tabletApi.pullLogs({ tabletId: ls.tablet_id, readMark: 0, deviceUid: ls.device_uid })
+          .catch(() => null);
+      }
+    }
+  }, [liveStatuses]);
+  useEffect(() => {
     Promise.all([
       apiRequest<any>("/classes?limit=200",              { auth: "school" }),
       apiRequest<any>("/sections?limit=500",             { auth: "school" }),
@@ -315,14 +330,12 @@ export default function DeviceManagement() {
   }, []);
   useEffect(() => {
     if (!selectedId) return;
-    void loadStatus(); void loadSessions();
+    void loadSessions();
     setDeviceUsers([]); setLogs([]);
-    // Reset device filter and tablet assignment picker to the newly selected device
     setFDevice(selectedId);
     const d = devices.find(x => x.id === selectedId);
     setATabletId(d?.tablet_id ?? "");
-    const iv = setInterval(() => void loadStatus(true), STATUS_POLL_MS);
-    return () => clearInterval(iv);
+    // No per-device polling needed — useLiveDeviceStatuses handles all devices every 30s
   }, [selectedId]);
   useEffect(() => { if (activeTab === "scans") void loadLogs(); }, [loadLogs, activeTab]);
   useEffect(() => {
@@ -333,17 +346,21 @@ export default function DeviceManagement() {
     setADorm((d as any).dormitory_id ?? "");
   }, [selectedId, devices]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived — all from live status, never from DB ────────────────────────
   const selected  = devices.find(d => d.id === selectedId);
-  const isOnline  = isLiveOnline(selected);
   const tabletId  = selected?.tablet_id ?? null;
-  const fkStatus  = status?.device_status ?? status?.data ?? null;
-  // Use live status tier if available, otherwise fall back to device list tier
-  const connTier  = getConnectionTier(status ?? { connection_tier: (selected as any)?.connection_tier });
+  const deviceUid = selected?.device_uid ?? null;
+
+  // connTier comes exclusively from the live status hook
+  const connTier: ConnTier = statusChecking && liveStatuses.length === 0
+    ? "offline"  // still pinging — keep disabled until real status arrives
+    : (liveSelected?.connection_tier ?? "offline");
+
   const tierInfo  = tierStyle(connTier);
-  // Push is only available when FK623 + Tablet + WireGuard are all active
+  // Push only when FK623 + bridge + WireGuard all confirmed connected
   const canPush   = connTier === "full";
-  const canAction = connTier !== "offline"; // sync time, get users etc work if bridge is reachable
+  // Most commands work if bridge is reachable (even if FK623 not physically connected)
+  const canAction = connTier !== "offline";
 
   const filteredSections = useMemo(() => sections.filter(s => !pushClassId || s.class_id === pushClassId), [sections, pushClassId]);
   const sessionNames     = useMemo(() => [...new Set([...sessions.map(s => s.name), ...logs.map(l => (l as any).sessionName).filter(Boolean)])].sort(), [sessions, logs]);
@@ -382,9 +399,7 @@ export default function DeviceManagement() {
   });
   const handleSyncTime   = () => act(async () => { if (!tabletId) throw new Error("No tablet"); await tabletApi.syncTime(tabletId); toast.success("Device time synced to server"); });
 
-  // device_uid routes commands to the specific FK623 on multi-device tablets.
-  // If null the backend falls back to the single-device path (safe for single-device setups).
-  const deviceUid = selected?.device_uid ?? null;
+  // device_uid is already declared in the derived state block above
 
   const handleGetUsers   = async () => { if (!tabletId) { toast.error("No tablet linked"); return; } setUsersLoading(true); try { const r = await tabletApi.getUsers(tabletId, deviceUid); setDeviceUsers(r.data?.users ?? []); toast.success(`${r.data?.count ?? 0} enrolled users`); } catch (e: any) { toast.error(e?.message ?? "Failed"); } finally { setUsersLoading(false); } };
   const handleDeleteUser = (uid: string) => act(async () => {
@@ -409,7 +424,7 @@ export default function DeviceManagement() {
     if (!ok) return;
     await tabletApi.clearLogs(tabletId, deviceUid);
     toast.success("Logs cleared from device");
-    void loadStatus();
+    refreshLiveStatus();
   });
   const handleClearUsers = () => act(async () => {
     if (!tabletId) throw new Error("No tablet");
@@ -422,7 +437,7 @@ export default function DeviceManagement() {
     await tabletApi.clearUsers(tabletId, deviceUid);
     toast.success("All users cleared");
     setDeviceUsers([]);
-    void loadStatus();
+    refreshLiveStatus();
   });
   const handleReboot = () => act(async () => {
     if (!tabletId) throw new Error("No tablet");
@@ -436,7 +451,7 @@ export default function DeviceManagement() {
     if (!ok) return;
     await tabletApi.resetDevice(tabletId);
     toast.success("Reboot command sent");
-    setTimeout(() => void loadStatus(true), 35_000);
+    setTimeout(() => refreshLiveStatus(), 35_000);
   });
 
   const handlePushStudents = async () => {
@@ -460,7 +475,7 @@ export default function DeviceManagement() {
       failed > 0
         ? toast.warning(`Pushed ${r.pushed_count}/${(r as any).selected_count ?? r.pushed_count + failed} — ${failed} failed. Check device connection.`)
         : toast.success(`Pushed ${r.pushed_count} student(s) to device successfully`);
-      void loadStatus();
+      refreshLiveStatus();
     } catch (e: any) {
       const msg = e?.message ?? "Push failed";
       // Distinguish "no tablet configured" from network errors
@@ -484,7 +499,7 @@ export default function DeviceManagement() {
       if (removeMode === "class" && rmClassId) payload.class_id = rmClassId;
       const r = await apiRequest<any>(`/devices/${selectedId}/remove-students`, { method: "POST", auth: "school", body: JSON.stringify(payload) });
       toast.success(`Removed ${(r as any).removed_count ?? 0} student(s) from device`);
-      void loadStatus();
+      refreshLiveStatus();
     } catch (e: any) { toast.error(e?.message ?? "Remove failed"); }
     finally { setRemoving(false); }
   };
@@ -629,26 +644,38 @@ export default function DeviceManagement() {
           <div className="w-52 shrink-0">
             <div className="flex items-center justify-between mb-2 px-0.5">
               <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Devices ({devices.length})</span>
-              <button onClick={() => void loadDevices()} disabled={devLoading} className="rounded-lg p-1.5 hover:bg-muted transition-colors" title="Refresh device list">
-                <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${devLoading ? "animate-spin" : ""}`} />
+              <button onClick={() => { void loadDevices(); }} disabled={devLoading || statusChecking}
+                className="rounded-lg p-1.5 hover:bg-muted transition-colors" title="Refresh and re-check all devices">
+                <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${(devLoading || statusChecking) ? "animate-spin" : ""}`} />
               </button>
             </div>
 
+            {/* "Checking devices" banner — shown while bridge pings are in-flight */}
+            {statusChecking && liveStatuses.length === 0 && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-[11px] text-blue-700">
+                <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                Checking device connections…
+              </div>
+            )}
+
             <div className="space-y-2 overflow-y-auto max-h-[calc(100vh-200px)]">
               {devices.map(device => {
-                const online   = isLiveOnline(device);
+                // Live tier — from bridge pings, never from DB
+                const tier     = getTier(device.id);
                 const isActive = device.id === selectedId;
                 const scope    = (device as any).location_scope as string | undefined;
                 const lbl      = (device as any).location_label as string | undefined;
-                const err      = device.last_sync_error ?? (device as any).last_status_message;
+                const liveInfo = liveStatuses.find(s => s.id === device.id);
+                // Only show error message when offline and we have a reason
+                const displayErr = tier === "offline" && liveInfo?.error ? liveInfo.error : null;
                 return (
                   <button key={device.id} onClick={() => { setSelectedId(device.id); setActiveTab("overview"); }}
                     className={`w-full rounded-xl border text-left transition-all duration-150 ${isActive ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/20" : "border-border bg-card hover:border-primary/30 hover:bg-muted/20 hover:shadow-sm"}`}
                   >
                     <div className="p-3.5">
-                      {/* Name + status */}
+                      {/* Name + live status dot */}
                       <div className="flex items-center gap-2 mb-1.5">
-                        <div className={`h-2.5 w-2.5 rounded-full shrink-0 flex-none ${deviceDotClass(device)}`} />
+                        <div className={`h-2.5 w-2.5 rounded-full shrink-0 flex-none ${tierDotClass(tier)}`} />
                         <span className={`font-semibold text-sm truncate flex-1 ${isActive ? "text-primary" : "text-foreground"}`}>{device.name}</span>
                         {isActive && <ChevronRight className="h-3.5 w-3.5 text-primary shrink-0" />}
                       </div>
@@ -658,12 +685,19 @@ export default function DeviceManagement() {
                         : <span className="text-[10px] text-amber-600 font-semibold">⚠ Not assigned</span>
                       }
                       {lbl && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{lbl}</p>}
-                      {/* Online text */}
-                      <p className={`text-[10px] font-medium mt-1 ${online ? "text-green-600" : "text-muted-foreground"}`}>
-                        {online ? "● Connected" : "○ Offline"}
+                      {/* Live status text */}
+                      <p className={`text-[10px] font-medium mt-1 ${tierTextClass(tier)}`}>
+                        {tier === "checking" ? "⟳ Checking…"
+                          : tier === "full"   ? "● Connected"
+                          : tier === "bridge" ? "◑ Bridge only"
+                          : "○ Offline"}
                       </p>
-                      {/* Error chip */}
-                      {err && <div className="mt-1.5 rounded-lg bg-red-50 border border-red-200 px-2 py-1 text-[10px] text-red-600 leading-snug line-clamp-2">{err}</div>}
+                      {/* Error — only for offline devices with a real reason */}
+                      {displayErr && (
+                        <div className="mt-1.5 rounded-lg bg-red-50 border border-red-200 px-2 py-1 text-[10px] text-red-600 leading-snug line-clamp-2">
+                          {displayErr}
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
@@ -718,17 +752,17 @@ export default function DeviceManagement() {
                             </span>
                           </div>
                           <p className={`text-xs mt-0.5 font-medium ${tierInfo.text}`}>{tierInfo.desc}</p>
-                          {status?.last_status_message && (
-                            <p className="text-xs text-muted-foreground mt-0.5">{status.last_status_message}</p>
+                          {liveSelected?.error && connTier !== "full" && (
+                            <p className="text-xs text-muted-foreground mt-0.5">{liveSelected.error}</p>
                           )}
                         </div>
                       </div>
 
                       {/* Action buttons */}
                       <div className="flex flex-wrap gap-1.5 shrink-0">
-                        <button onClick={() => void loadStatus()} disabled={statusLoading}
+                        <button onClick={() => { invalidateLiveStatusCache(); refreshLiveStatus(); }} disabled={statusChecking}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50 shadow-sm transition-all">
-                          <Activity className="h-3.5 w-3.5" /> Check Status
+                          <Activity className={`h-3.5 w-3.5 ${statusChecking ? "animate-spin" : ""}`} /> Check Status
                         </button>
                         <button onClick={handleSyncTime} disabled={connTier === "offline"}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50 shadow-sm transition-all">
@@ -762,12 +796,12 @@ export default function DeviceManagement() {
                   {/* FK623 metrics — 6 tiles */}
                   <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-border">
                     {[
-                      { icon: Users,       label: "Users",        val: fkStatus?.users        ?? selected.device_users_count ?? 0, color: "text-blue-600"   },
-                      { icon: Fingerprint, label: "Fingerprints", val: fkStatus?.fingerprints ?? 0,                                color: "text-purple-600" },
-                      { icon: Smile,       label: "Faces",        val: fkStatus?.faces        ?? 0,                                color: "text-green-600"  },
-                      { icon: CreditCard,  label: "Cards",        val: fkStatus?.cards        ?? 0,                                color: "text-orange-600" },
-                      { icon: HardDrive,   label: "Log Records",  val: fkStatus?.logs         ?? selected.device_logs_count ?? 0, color: "text-indigo-600" },
-                      { icon: Key,         label: "Serial No.",   val: fkStatus?.serialNumber ?? "—",                             color: "text-gray-500"   },
+                      { icon: Users,       label: "Users",        val: selected?.device_users_count ?? 0, color: "text-blue-600"   },
+                      { icon: Fingerprint, label: "Fingerprints", val: 0,                                 color: "text-purple-600" },
+                      { icon: Smile,       label: "Faces",        val: 0,                                 color: "text-green-600"  },
+                      { icon: CreditCard,  label: "Cards",        val: 0,                                 color: "text-orange-600" },
+                      { icon: HardDrive,   label: "Log Records",  val: selected?.device_logs_count ?? 0,  color: "text-indigo-600" },
+                      { icon: Key,         label: "Serial No.",   val: selected?.device_serial ?? "—",    color: "text-gray-500"   },
                     ].map(({ icon: Icon, label, val, color }) => (
                       <div key={label} className="flex flex-col items-center justify-center gap-1 py-4 bg-card hover:bg-muted/10 transition-colors">
                         <Icon className={`h-4 w-4 ${color}`} />
@@ -1071,7 +1105,7 @@ export default function DeviceManagement() {
                               {pushing ? <><RefreshCw className="h-4 w-4 animate-spin" /> Pushing…</> : <><Upload className="h-4 w-4" /> Push Students</>}
                             </button>
                           </div>
-                          {!isOnline && <div className="mt-3 flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><AlertTriangle className="h-4 w-4 shrink-0" /> Device appears offline. The system will retry automatically for up to 5 minutes.</div>}
+                          {connTier === "offline" && <div className="mt-3 flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"><AlertTriangle className="h-4 w-4 shrink-0" /> Device appears offline. The system will retry automatically for up to 5 minutes.</div>}
                         </div>
                       </Card>
 
@@ -1463,3 +1497,5 @@ export default function DeviceManagement() {
     </AppLayout>
   );
 }
+
+

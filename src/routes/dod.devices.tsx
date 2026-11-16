@@ -22,6 +22,7 @@ import { apiRequest } from "@/lib/api";
 import { deviceLocationApi } from "@/lib/boardingApi";
 import { cn } from "@/lib/utils";
 import { isDeviceOnline } from "@/components/ui-kit/DeviceStatusCards";
+import { useLiveDeviceStatuses, tierDotClass, tierLabel, invalidateLiveStatusCache } from "@/lib/liveDeviceStatus";
 
 export const Route = createFileRoute("/dod/devices")({
   beforeLoad: ({ location }) => directorOfDisciplineRouteGuard(location),
@@ -98,6 +99,7 @@ const getStudentSyncStatus = (student: { device_sync_status?: string | null; dev
 };
 
 function DodDevicesPage() {
+  const { getTier, checking: liveChecking, refresh: liveRefresh } = useLiveDeviceStatuses(30_000);
   const [devices,     setDevices]     = useState<DeviceRow[]>([]);
   const [dormitories, setDormitories] = useState<Dormitory[]>([]);
   const [loading,     setLoading]     = useState(true);
@@ -231,8 +233,8 @@ function DodDevicesPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-sm">{d.name}</span>
                       <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold",
-                        isDeviceOnline(d) ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground")}>
-                        {isDeviceOnline(d) ? "Online" : "Offline"}
+                        getTier(d.id) === "full" ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground")}>
+                        {getTier(d.id) === "full" ? "Online" : "Offline"}
                       </span>
                       {d.location_scope ? (
                         <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[10px] font-bold capitalize">
@@ -460,3 +462,5 @@ function DodDevicesPage() {
     </DodLayout>
   );
 }
+
+

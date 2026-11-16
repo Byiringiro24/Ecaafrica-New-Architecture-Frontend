@@ -49,6 +49,7 @@ import { toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { apiRequest } from "@/lib/api";
 import { isDeviceOnline } from "@/components/ui-kit/DeviceStatusCards";
+import { useLiveDeviceStatuses, tierDotClass, tierLabel, tierTextClass, invalidateLiveStatusCache } from "@/lib/liveDeviceStatus";
 import { localDateInputValue } from "@/lib/dateInput";
 import { studentSearchText, studentIdNumber } from "@/lib/studentIdentity";
 import { DEFAULT_FK623_CONFIG } from "@/lib/tabletApi";
@@ -251,6 +252,9 @@ function ServerCommandCenter() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [devices, setDevices] = useState<Device[]>([]);
+
+  // Live device status — real bridge pings, never DB values
+  const { statuses: liveStatuses, checking: liveChecking, refresh: liveRefresh, getTier, isConnected: isLiveConnected } = useLiveDeviceStatuses(30_000);
   const [tablets, setTablets] = useState<Tablet[]>([]);
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [sections, setSections] = useState<SectionRecord[]>([]);
@@ -408,7 +412,7 @@ function ServerCommandCenter() {
             cardCount: nextLogs.filter((log) => log.scan_method === "nfc").length,
             passwordCount: nextLogs.filter((log) => log.scan_method === "manual").length,
             totalDevices: nextDevices.length,
-            onlineDevices: nextDevices.filter(d => isDeviceOnline(d as any)).length,
+            onlineDevices: nextDevices.filter(d => getTier(d.id) === "full").length,
           });
         }
         if (sessionsResult.status === "fulfilled") setSessions(sessionsResult.value.sessions ?? []);
@@ -418,7 +422,7 @@ function ServerCommandCenter() {
         ...current,
         totalStudents: nextStudents.length,
         totalDevices: nextDevices.length,
-        onlineDevices: nextDevices.filter(d => isDeviceOnline(d as any)).length,
+        onlineDevices: nextDevices.filter(d => getTier(d.id) === "full").length,
         attendanceToday: current.totalLogs ? current.attendanceToday : logs.filter((log) => log.scanned_at?.startsWith(today)).length,
       }));
     } catch (error: any) {
@@ -733,7 +737,7 @@ function ServerCommandCenter() {
     }
     // Check device online status before attempting — backend will also guard, but
     // showing the reason here gives immediate feedback without a 503 round-trip.
-    if (selectedDevice && !isDeviceOnline(selectedDevice as any)) {
+    if (selectedDevice && getTier(selectedDevice?.id ?? "") !== "full") {
       toast.error("Device is offline. Check the bridge connection and WireGuard VPN first.");
       return;
     }
@@ -1058,7 +1062,7 @@ function ServerCommandCenter() {
     }
   }
 
-  const connected = isDeviceOnline((selectedDevice ?? {}) as any);
+  const connected = getTier(selectedDevice?.id ?? "") === "full";
 
   // ── Socket-backed live monitor ──────────────────────────────────────────
   const handleGateEvent = useCallback((event: GateSocketEvent) => {
@@ -1273,7 +1277,7 @@ function ServerCommandCenter() {
                           <div className="font-semibold text-foreground">{device.name}</div>
                           <div className="text-xs text-muted-foreground">{device.location ?? "No location"}</div>
                         </div>
-                        <StatusPill value={isDeviceOnline(device as any) ? "online" : "offline"} />
+                        <StatusPill value={getTier(device.id) === "full" ? "online" : "offline"} />
                       </div>
                       <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
                         <span>Users on device: {device.device_users_count ?? 0}</span>
@@ -2091,3 +2095,4 @@ function StatusPill({ value }: { value: string }) {
 function EmptyState({ text }: { text: string }) {
   return <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-6 text-center text-sm text-muted-foreground">{text}</div>;
 }
+
