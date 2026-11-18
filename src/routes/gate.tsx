@@ -68,6 +68,7 @@ type StudentOnCampus = {
 const TABS = ["Overview", "Live Monitor", "Students", "Devices", "Reports"] as const;
 type Tab = (typeof TABS)[number];
 const PAGE_SIZE = 25;
+const LOG_VIEW_REFRESH_MS = 15_000;
 
 const fmt = (ts?: string | null) => {
   if (!ts) return "�";
@@ -193,6 +194,16 @@ function GatePage() {
   useEffect(() => {
     void Promise.all([fetchLogs(), fetchStats(), fetchTablets(), fetchStudentsOnCampus()]);
   }, [date, page, histDir, histSearch, histMethod]);
+
+  // The server pulls device logs in the background. Refresh this read-only
+  // view periodically so those newly saved records appear without a manual sync.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void Promise.all([fetchLogs(true), fetchStats(), fetchTablets()]);
+    }, LOG_VIEW_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchLogs, fetchStats, fetchTablets]);
 
   // Live monitor: fetch today logs on tab switch, then socket keeps it live
   useEffect(() => {
@@ -679,7 +690,7 @@ function DevicesTab({ tablets, onRefresh }: { tablets: Tablet[]; onRefresh: () =
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
             <h3 className="font-display font-bold">Device / Tablet Status</h3>
-            <p className="text-xs text-muted-foreground">Logs sync automatically in the background from reachable devices. Use Sync Now to pull immediately.</p>
+            <p className="text-xs text-muted-foreground">The server syncs logs from reachable devices in the background. This view refreshes every 15 seconds; use Sync Now to pull immediately.</p>
           </div>
           <button
             onClick={onRefresh}
