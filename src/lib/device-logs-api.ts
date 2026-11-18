@@ -4,7 +4,7 @@
  *
  * Primary data source: /attendance/records/device-logs
  * (reads from attendance_logs table - populated automatically by the
- *  server-side pull-logs job every 5 minutes).
+ *  server-side pull-logs job while tablets and devices are reachable).
  */
 
 import { apiRequest } from './api';

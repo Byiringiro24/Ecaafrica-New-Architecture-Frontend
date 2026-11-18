@@ -679,7 +679,7 @@ function DevicesTab({ tablets, onRefresh }: { tablets: Tablet[]; onRefresh: () =
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
             <h3 className="font-display font-bold">Device / Tablet Status</h3>
-            <p className="text-xs text-muted-foreground">Logs are pulled automatically every 5 minutes from online devices</p>
+            <p className="text-xs text-muted-foreground">Logs sync automatically in the background from reachable devices. Use Sync Now to pull immediately.</p>
           </div>
           <button
             onClick={onRefresh}

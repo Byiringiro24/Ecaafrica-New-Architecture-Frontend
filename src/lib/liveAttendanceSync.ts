@@ -1,8 +1,9 @@
 /**
  * liveAttendanceSync.ts
  *
- * The server now automatically pulls logs from all devices every 5 minutes
- * via the pull-logs.job.ts background job. This module is retained for
+ * The server automatically pulls logs from all active devices in the
+ * background via pull-logs.job.ts. Its cadence is configured server-side.
+ * This module is retained for
  * compatibility but delegates to the server-side pull endpoint.
  *
  * Call `syncLiveAttendanceFromTablets({ force: true })` to trigger an
@@ -11,7 +12,8 @@
 
 import { apiRequest } from "./api";
 
-const LIVE_ATTENDANCE_SYNC_MIN_MS = 5 * 60_000; // respect server cadence
+// Throttle duplicate page-triggered pulls; the server's background job runs independently.
+const LIVE_ATTENDANCE_SYNC_MIN_MS = 5 * 60_000;
 let lastLiveAttendanceSyncAt = 0;
 let liveAttendanceSyncInFlight: Promise<SyncSummary> | null = null;
 
